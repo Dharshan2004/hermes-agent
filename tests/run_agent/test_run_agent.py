@@ -2344,20 +2344,39 @@ class TestExecuteToolCalls:
 
     def test_terminal_large_stdout_is_bounded_before_provider(self, agent):
         """Regression for #50807: terminal's 50K stdout cap must not be sent inline."""
-        import tools.terminal_tool  # noqa: F401  # registers terminal threshold
+        import tools.terminal_tool as terminal_tool_module
 
-        terminal_stdout = (
-            ("x" * 20_000)
-            + "\n\n... [OUTPUT TRUNCATED - 50,000 chars omitted out of 100,000 total] ...\n\n"
-            + ("x" * 30_000)
-        )
-        # Mirror terminal_tool's field order (status fields ahead of output)
-        # so the head-truncated preview keeps exit_code/error visible.
-        terminal_result = json.dumps({
-            "exit_code": 0,
-            "error": None,
-            "output": terminal_stdout,
-        })
+        mock_env = MagicMock()
+        mock_env.execute.return_value = {
+            "output": "x" * 100_000,
+            "returncode": 0,
+        }
+        terminal_config = {
+            "env_type": "local",
+            "cwd": str(Path.cwd()),
+            "timeout": 30,
+        }
+        with (
+            patch(
+                "tools.terminal_tool._get_env_config",
+                return_value=terminal_config,
+            ),
+            patch("tools.terminal_tool._start_cleanup_thread"),
+            patch(
+                "tools.terminal_tool._active_environments",
+                {"default": mock_env},
+            ),
+            patch("tools.terminal_tool._last_activity", {"default": 0}),
+            patch(
+                "tools.terminal_tool._check_all_guards",
+                return_value={"approved": True},
+            ),
+        ):
+            terminal_result = terminal_tool_module.terminal_tool(
+                command="python3 -c \"print('x'*100000)\"",
+                timeout=30,
+            )
+
         tc = _mock_tool_call(
             name="terminal",
             arguments=json.dumps({
